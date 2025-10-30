@@ -42,9 +42,13 @@ int main (void){
     configTimer();
     configDMA();
     configUART();
+    Keypad_Init();
 
     while (1){
-
+        char ch;
+        if (Keypad_GetCharNonBlock(&ch)){
+        // acá procesás la tecla (enviar por UART, etc.)
+        }
     }
 
     return 0;
@@ -136,7 +140,7 @@ void EINT3_IRQHandler(void){
   // Deshabilito nuevas IRQ de columnas durante el manejo
   uint32_t col_mask = 0;
   for (int i=0;i<4;i++) col_mask |= COL_BITS[i];
-  GPIO_IntCmd(COL_PORT, col_mask, 2); // Deshabilitar el NVIC despues
+  NVIC_DisableIRQ(EINT3_IRQn); // Deshabilitar Interrupciones de GPIO
 
   // Limpiar flags latentes (falling)
   GPIO_ClearInt(COL_PORT, col_mask);
@@ -154,7 +158,7 @@ void EINT3_IRQHandler(void){
 
   // Limpiar y re-habilitar
   GPIO_ClearInt(COL_PORT, col_mask);
-  GPIO_IntCmd(COL_PORT, col_mask, 0); // 0 = falling edge (enable)
+  NVIC_EnableIRQ(EINT3_IRQn); // 0 = falling edge (enable)
 }
 
 // --- API mínima ---
