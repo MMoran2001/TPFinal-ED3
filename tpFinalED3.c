@@ -23,9 +23,19 @@ static const char keymap[4][4] = {
 };
 
 static volatile char last_key = 0;
-static volatile uint32_t debounce_ms = 20; // antirrebote básico
+static volatile uint32_t debounce_ms = 20; 
 
+// --- Prototipos para el teclado ---
+static void rows_all_high(void);
+static int read_col_index(void);
+static int scan_key_position(int *r_out, int *c_out);
+static void keypad_pins_init(void);
+static void keypad_irq_init(void);
+static void delay_ms(uint32_t ms);
 
+// --- Handlers de interrupción ---
+void SysTick_Handler(void);
+void EINT3_IRQHandler(void);
 
 void configPin(void);
 void configADC(void);
@@ -36,12 +46,6 @@ void configUART(void);
 
 
 int main (void){
-    configPin();
-    configADC();
-    configDAC();
-    configTimer();
-    configDMA();
-    configUART();
     Keypad_Init();
 
     while (1){
@@ -165,10 +169,7 @@ void EINT3_IRQHandler(void){
 void Keypad_Init(void){
   keypad_pins_init();
   // SysTick 1ms (asumiendo CCLK conocido, p.ej. 100 MHz → 100000-1 para 1ms si SysTick usa CCLK/100)
-  SysTick->LOAD = (SystemCoreClock/1000) - 1;
-  SysTick->VAL  = 0;
-  SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk | SysTick_CTRL_TICKINT_Msk | SysTick_CTRL_ENABLE_Msk;
-
+  SysTick_Config(SystemCoreClock/1000);
   keypad_irq_init();
 }
 
