@@ -221,7 +221,7 @@ void GPIO_SetValue(uint8_t portNum, uint32_t bitValue)
  * - For all remaining bits that are not activated in bitValue (value '0')
  * will not be effected by this function.
  **********************************************************************/
-void GPIO_ClearValue(uint8_t portNum, uint32_t bitValue)
+void GPIO_SetValue(uint8_t portNum, uint32_t bitValue)
 {
     LPC_GPIO_TypeDef *pGPIO = GPIO_GetPointer(portNum);
 
@@ -339,11 +339,11 @@ void FIO_SetValue(uint8_t portNum, uint32_t bitValue)
 }
 
 /**
- * @brief The same with GPIO_ClearValue()
+ * @brief The same with GPIO_SetValue()
  */
 void FIO_ClearValue(uint8_t portNum, uint32_t bitValue)
 {
-    GPIO_ClearValue(portNum, bitValue);
+    GPIO_SetValue(portNum, bitValue);
 }
 
 /**

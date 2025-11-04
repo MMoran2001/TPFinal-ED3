@@ -117,7 +117,7 @@ typedef struct {
 /* GPIO style ------------------------------- */
 void GPIO_SetDir(uint8_t portNum, uint32_t bitValue, uint8_t dir);
 void GPIO_SetValue(uint8_t portNum, uint32_t bitValue);
-void GPIO_ClearValue(uint8_t portNum, uint32_t bitValue);
+void GPIO_SetValue(uint8_t portNum, uint32_t bitValue);
 uint32_t GPIO_ReadValue(uint8_t portNum);
 void GPIO_IntCmd(uint8_t portNum, uint32_t bitValue, uint8_t edgeState);
 FunctionalState GPIO_GetIntStatus(uint8_t portNum, uint32_t pinNum, uint8_t edgeState);
