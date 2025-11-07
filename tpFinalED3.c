@@ -13,8 +13,9 @@
 #define ROW_PORT 2
 #define COL_PORT 2
 #define TIMEOUT 7000		// Arranca por default en un valor, pero el potenciometro lo varia durante la ejecucion.
-#define ADCRATE 10000		// A mayor ADCRATE mayor fidelidad de sonido.
-#define LISTSIZE 12000		// No superar los 15k muestras por que se llena la SRAM 32kB.
+#define ADCRATE 200000		// A mayor ADCRATE mayor fidelidad de sonido.
+#define LISTSIZE 2500		// No superar los 15k muestras por que se llena la SRAM 32kB.
+#define transferSize 4096	// Tamaño de transferencia del DMA
 
 
 static const uint32_t ROW_BITS[] = { (1<<0), (1<<1), (1<<2), (1<<3)};
@@ -28,10 +29,12 @@ static const char keymap[4][4] = {
 };
 
 static volatile char last_key = 0;
-static volatile uint32_t debounce_ms = 20;
+static volatile uint32_t debounce_ms = 10;
 volatile int newkey = 0;
 volatile int recording = 0;
 volatile int sound_index = 0;
+volatile int row, col;
+volatile uint32_t ticks_ms = 0;
 
 /* Esta lista guarda el sonido grabado por el microfono. */
 __IO uint16_t listADC[LISTSIZE] = {0};
@@ -60,15 +63,22 @@ void configTimer(void);
 void configDMA(void);
 void configUART(void);
 
+uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max);
 
 // --- Handlers de interrupción ---
 void SysTick_Handler(void);
 void EINT3_IRQHandler(void);
 void ADC_IRQHandler(void);
 
+void Keypad_clear(char *ch);
+
 int main (void){
    Keypad_Init();
    configPin();
+   configADC();
+   configDAC();
+   configDMA();
+
 
    GPIO_SetValue(0, (1<<22)); // Apaga led rojo
    GPIO_SetValue(3, (1<<25)); // Apaga led verde
@@ -77,7 +87,6 @@ int main (void){
        char ch;
        Keypad_GetCharNonBlock(&ch);
         // acá procesás la tecla (enviar por UART, etc.)
-       if(newkey){
         switch(ch){
             case '1':
                   GPIO_SetValue(3, (1<<25)); // Apaga led rojo
@@ -85,7 +94,7 @@ int main (void){
                   GPIO_ClearValue(0, (1<<22)); // Enciende led rojo
                 break;
             case '2':
-                  GPIO_SetValue(3, (1<<22)); // Apaga led rojo
+                  GPIO_SetValue(0, (1<<22)); // Apaga led rojo
                   GPIO_SetValue(3, (1<<26)); // Apaga led azul
                   GPIO_ClearValue(3, (1<<25)); // Enciende led verde
                 break;
@@ -96,36 +105,57 @@ int main (void){
                 break;
             case '4': // Boton para grabar, despues podemos cambiar el valor del case
               recording = 1;
-                while (read_col_index() >= 0 && recording) { // Mientras se mantenga presionada la tecla y este grabando
+              GPIO_ClearValue(3, (1<<26));
+              GPIO_ClearValue(3, (1<<25));
+                while (recording) { // Mientras se mantenga presionada la tecla y este grabando
                   //TO DO: Espera a que se suelte la tecla, porque read_col_index me bloquea el programa en scan_key_position
                   //TO DO: Ver como hacer para que el programa tome dos teclas
+                  Keypad_clear(&ch);
                   Keypad_GetCharNonBlock(&ch);
+
+
+
                   if(ch == '1'){
                     sound_index = 1; // Si toco la tecla '1' grabo en la lista de sonido 1
+                    //NVIC_EnableIRQ(ADC_IRQn); // Habilito la interrupcion del ADC para empezar a grabar
+                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
+                    GPIO_SetValue(3, (1<<26)); // Apaga led azul
+                    GPIO_ClearValue(0, (1<<22));
                   }
                   else if(ch == '2'){
                     sound_index = 2; // Si toco la tecla '2' grabo en la lista de sonido 2
+                    //NVIC_EnableIRQ(ADC_IRQn);
+                    GPIO_SetValue(3, (1<<26)); // Apaga led verde
+                    GPIO_SetValue(0, (1<<22)); // Apaga led azul
+                    GPIO_ClearValue(3, (1<<25));
                   }
                   else if(ch == '3'){
                     sound_index = 3; // Si toco la tecla '3' grabo en la lista de sonido 3
+                    //NVIC_EnableIRQ(ADC_IRQn);
+                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
+                    GPIO_SetValue(0, (1<<22)); // Apaga led azul
+                    GPIO_ClearValue(3, (1<<26));
+                  }
+                  else if(ch == '4'){
+                    recording = 0;
+                    GPIO_SetValue(0, (1<<22)); // Apaga led rojo
+                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
+                    GPIO_SetValue(3, (1<<26)); // Apaga led azul
                   }
                   else{
                     sound_index = 0;
                   }
                 }// Recording va a cambiar a 0 en el handler del ADC cuando se llene la lista
-                NVIC_DisableIRQ(ADC_IRQn); // Deshabilito la interrupcion del ADC para dejar de grabar
-                recording = 0;
+                //NVIC_DisableIRQ(ADC_IRQn); // Deshabilito la interrupcion del ADC para dejar de grabar
                 sound_index = 0;
                 break;
             default:
-                  GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-                  GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                  GPIO_SetValue(3, (1<<26)); // Apaga led azul
+                 // GPIO_SetValue(0, (1<<22)); // Apaga led rojo
+                  //GPIO_SetValue(3, (1<<25)); // Apaga led verde
+                  //GPIO_SetValue(3, (1<<26)); // Apaga led azul
                 break;
 
 
-        }
-        newkey = 0;
         }
         }
 
@@ -212,47 +242,21 @@ void keypad_irq_init(void){
 
   GPIO_IntCmd(COL_PORT, col_mask, 1); // 1 = falling edge
   NVIC_EnableIRQ(EINT3_IRQn);         // IRQ de GPIO P0/P2
-  //NVIC_SetPriority(EINT3_IRQn, 5);
+  NVIC_SetPriority(EINT3_IRQn, 3);
 }
 
 
 
 void delay_ms(uint32_t ms){
-  ticks_ms = 0;
   while (ticks_ms < ms) {} // a ver si el antirebote anda bien asi
-}
-
-// --- ISR de GPIO: localizar tecla, antirrebote, limpiar flags ---
-void EINT3_IRQHandler(void){
-  // Deshabilito nuevas IRQ de columnas durante el manejo
-  uint32_t col_mask = 0;
-  for (int i=0;i<4;i++) col_mask |= COL_BITS[i];
-  NVIC_DisableIRQ(EINT3_IRQn); // Deshabilitar Interrupciones de GPIO
-
-  // Limpiar flags latentes (falling)
-  GPIO_ClearInt(COL_PORT, col_mask);
-
-  // Antirrebote: tomar estado estable luego de breve espera
-  delay_ms(debounce_ms);
-
-  int row,col;
-  if (scan_key_position(&row,&col)){
-    last_key = keymap[row][col];
-    newkey = 1;
-    // Esperar liberación
-    while (read_col_index() >= 0) { /* tecla aun presionada */ }
-    delay_ms(debounce_ms);
-  }
-
-  // Limpiar y re-habilitar
-  GPIO_ClearInt(COL_PORT, col_mask);
-  NVIC_EnableIRQ(EINT3_IRQn); // 0 = falling edge (enable)
+  ticks_ms = 0;
 }
 
 // --- API mínima ---
 void Keypad_Init(void){
   keypad_pins_init();
   SysTick_Config(100000); // Systick a 1ms
+  NVIC_SetPriority(SysTick_IRQn, 2); // Asignar mayor prioridad a SysTick
   keypad_irq_init();
 }
 
@@ -276,8 +280,8 @@ void Keypad_GetCharNonBlock(char *ch){
 // --- configuración de pines ---
 void configPin(void){
   PINSEL_CFG_Type PinCfg = {0};
-  
-  // ADC
+
+  // ADC - Microfono
   PinCfg.Portnum = 0;
   PinCfg.Pinnum = 23;
   PinCfg.Funcnum = 1;
@@ -329,11 +333,12 @@ void configPin(void){
 void configADC(void){
   ADC_Init(LPC_ADC, ADCRATE);
   ADC_StartCmd(LPC_ADC, ADC_START_CONTINUOUS);
-  ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, DISABLE); // El canal del microfono se configura apagado hasta que empiece la grabacion
-  ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, ENABLE); // El canal del potenciometro empieza activo
+  ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE); // El canal del microfono se configura apagado hasta que empiece la grabacion
+  ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, DISABLE); // El canal del potenciometro empieza activo
   ADC_BurstCmd(LPC_ADC, ENABLE); // Modo burst
-  ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE); // Activo la interrupción del microfono, pero no se si activar la interrupción del potenciometro tambien 
-  ADC_IntConfig(LPC_ADC, ADC_ADINTEN1, ENABLE); 
+  ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE); // Activo la interrupción del microfono, pero no se si activar la interrupción del potenciometro tambien
+  ADC_IntConfig(LPC_ADC, ADC_ADINTEN1, ENABLE);
+  NVIC_SetPriority(ADC_IRQn, 4);
 }
 
 // --- configuración del DAC ---
@@ -350,7 +355,17 @@ void configDAC(void){
 
 // --- configuración de DMA ---
 // Podemos copiar lo de los chicos y modificarlo para lo nuestro
-
+void configDMA(void){
+  GPDMA_Init();
+  GPDMA_Channel_CFG_Type  DMAcfg = {0};
+  DMAcfg.ChannelNum = 0;
+  DMAcfg.TransferSize = 0;
+  DMAcfg.TransferType = GPDMA_TRANSFERTYPE_P2P;
+  DMAcfg.SrcConn = GPDMA_CONN_ADC;
+  DMAcfg.DstConn = GPDMA_CONN_DAC;
+  GPDMA_Setup(&DMAcfg);
+  GPDMA_ChannelCmd(0, ENABLE);
+}
 
 /*
 * ---------------------------------------------------------------
@@ -363,7 +378,7 @@ void configDAC(void){
 */
 
 // --- Handler de Systick ---
-volatile uint32_t ticks_ms = 0;
+
 void SysTick_Handler(void){ ticks_ms++; }
 
 // --- Handler de interrupcion por GPIO ---
@@ -385,8 +400,8 @@ void EINT3_IRQHandler(void){
     last_key = keymap[row][col];
     newkey = 1;
     // Esperar liberación
-    while (read_col_index() >= 0) { /* tecla aun presionada */ }
-    delay_ms(debounce_ms);
+    //while (read_col_index() >= 0) { /* tecla aun presionada */ }
+    //delay_ms(debounce_ms);
   }
 
   // Limpiar y re-habilitar
@@ -395,42 +410,47 @@ void EINT3_IRQHandler(void){
 }
 
 // --- Handler de interrupcion del ADC ---
-void ADC_IRQHandler(void){
-  if(ADC_GlobalGetStatus(LPC_ADC, 1)){ // Verifico si se levanto la flag DONE global
-    if(ADC_ChannelGetStatus(LPC_ADC, 0, 1)){ // Verifico si se levanto el flag de DONE del canal del microfono (0)
-      if (*samples_count <= LISTSIZE)
-		{
-			/* Comenzamos a grabar un audio y guardarlo en el array que corresponda. */
-			GPIO_ClearValue(0, (1<<22)); // Enciende led rojo
-      if(sound_index == 1){
-        sound1_list[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
-      }
-      else if(sound_index == 2){
-        sound2_list[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
-      }
-      else{
-        sound3_list[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
-      }
-		}
-		else
-		{
-			GPIO_SetValue(0, (1<<22));  	// Apaga el led rojo.
-			GPIO_SetValue(0, (1<<25));  	// Apaga el led verde.
-			GPIO_SetValue(0, (1<<26));  	// Apaga el led azul.
-			*samples_count = 0;
-			recording = 0;
-			moveListDAC();
-		}
-
-    }
-    if(ADC_ChannelGetStatus(LPC_ADC, 1, 1)){ // Verifico si se levanto el flag de DONE del canal del potenciometro (1)
-      uint32_t pot_value = ADC_ChannelGetData(LPC_ADC, 1); // Leo el valor del potenciometro
-      uint32_t timeout = map(pot_value, 0, 1024, 5000, 20000); // Escalo el valor del potenciometro para usarlo como timeout (Me base en el otro codigo)
-      DAC_SetDMATimeOut(LPC_DAC, timeout); // Actualizo el timeout del DAC
-    }
-
-  }
-}
+//void ADC_IRQHandler(void){
+//  if(ADC_GlobalGetStatus(LPC_ADC, 1)){ // Verifico si se levanto la flag DONE global
+//    if(ADC_ChannelGetStatus(LPC_ADC, 0, 1)){ // Verifico si se levanto el flag de DONE del canal del microfono (0)
+//      if(read_col_index() >= 0){
+//			/* Comenzamos a grabar un audio y guardarlo en el array que corresponda. */
+//
+//      if(sound_index == 1 && *samples_count <= LISTSIZE){
+//        sound1_list[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
+//        GPIO_ClearValue(0, (1<<22)); // Enciende led rojo
+//        (*samples_count)++;
+//      }
+//      else if(sound_index == 2 && *samples_count <= LISTSIZE){
+//        sound2_list[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
+//        GPIO_ClearValue(0, (1<<22)); // Enciende led rojo
+//        (*samples_count)++;
+//      }
+//      else if(sound_index == 3 && *samples_count <= LISTSIZE){
+//        sound3_list[*samples_count] = ((LPC_ADC->ADDR0)>>6) & 0x3FF;
+//        GPIO_ClearValue(0, (1<<22)); // Enciende led rojo
+//        (*samples_count)++;
+//      }
+//      else
+//		  {
+//			  GPIO_SetValue(0, (1<<22));  	// Apaga el led rojo.
+//			  GPIO_SetValue(0, (1<<25));  	// Apaga el led verde.
+//			  GPIO_SetValue(0, (1<<26));  	// Apaga el led azul.
+//			  //moveListDAC();
+//		  }
+//      if(*samples_count >= LISTSIZE){
+//        *samples_count = 0;
+//		  }
+//    }
+//    }
+//    if(ADC_ChannelGetStatus(LPC_ADC, 1, 1)){ // Verifico si se levanto el flag de DONE del canal del potenciometro (1)
+//      uint32_t pot_value = ADC_ChannelGetData(LPC_ADC, 1); // Leo el valor del potenciometro
+//      uint32_t timeout = map(pot_value, 0, 1024, 5000, 20000); // Escalo el valor del potenciometro para usarlo como timeout (Me base en el otro codigo)
+//      DAC_SetDMATimeOut(LPC_DAC, timeout); // Actualizo el timeout del DAC
+//    }
+//
+//  }
+//}
 
 /*
 * ---------------------------------------------------------------
@@ -445,5 +465,9 @@ void ADC_IRQHandler(void){
 uint32_t map(uint32_t x, uint32_t in_min, uint32_t in_max, uint32_t out_min, uint32_t out_max)
 {
 	/* Convierte el valor recibido a un valor correspondiente dentro de una escala MIN-MAX dada. */
-	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+	return ((x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min);
+}
+
+void Keypad_clear(char *ch){
+	*ch = 0;
 }
