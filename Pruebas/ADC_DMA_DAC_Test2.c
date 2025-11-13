@@ -77,7 +77,7 @@ void configDMA(void) {
 //------------------ DMA: ADC -> RAM (canal 0, P2M) ----------------
 void configDmaAdc(void) {
     GPDMA_Channel_CFG_Type cfg;
-
+    NVIC_DisableIRQ(DMA_IRQn);
     GPDMA_ChannelCmd(0, DISABLE);
 
     cfg.ChannelNum    = 0;
@@ -92,12 +92,13 @@ void configDmaAdc(void) {
 
     GPDMA_Setup(&cfg);
     GPDMA_ChannelCmd(0, ENABLE);
+    NVIC_EnableIRQ(DMA_IRQn);
 }
 
 //------------------ DMA: RAM -> DAC (canal 1, M2P) ----------------
 void configDmaDac(void) {
     GPDMA_Channel_CFG_Type cfg;
-
+    NVIC_DisableIRQ(DMA_IRQn);
     GPDMA_ChannelCmd(1, DISABLE);
 
     cfg.ChannelNum    = 1;
@@ -112,6 +113,7 @@ void configDmaDac(void) {
 
     GPDMA_Setup(&cfg);
     GPDMA_ChannelCmd(1, ENABLE);
+    NVIC_EnableIRQ(DMA_IRQn);
 }
 
 void GPDMA_IRQHandler(void) {
