@@ -13,10 +13,12 @@
 #define ROW_PORT 2
 #define COL_PORT 2
 //#define TIMEOUT 3124
-#define ADCRATE 200000		// A mayor ADCRATE mayor fidelidad de sonido.
-#define LISTSIZE 2000		// Cantidad de muestras
+#define ADCRATE 21000		// A mayor ADCRATE mayor fidelidad de sonido.
+#define LISTSIZE 4000		// Cantidad de muestras
 #define ADDRESS ((uint32_t)0x2007C000) // buffer en RAM2
 #define DACRATE (25000000)/ADCRATE
+
+static uint16_t * const adc_dac_buffer = (uint16_t *)ADDRESS;
 
 static const uint32_t ROW_BITS[] = { (1<<0), (1<<1), (1<<2), (1<<3)};
 static const uint32_t COL_BITS[] = { (1<<4), (1<<5), (1<<6), (1<<7)};
@@ -51,9 +53,9 @@ int sequence_recording = 0;
 
 /* Esta lista guarda el sonido grabado por el microfono. */
 volatile uint32_t muestras_adc[LISTSIZE] = {0};
-volatile uint32_t sound1_list[LISTSIZE] = {0};		// Lista de sonido 1
-volatile uint32_t sound2_list[LISTSIZE] = {0};		// Lista de sonido 2
-volatile uint32_t sound3_list[LISTSIZE] = {0};		// Lista de sonido 3
+__IO uint32_t sound1_list[LISTSIZE] = {0};		// Lista de sonido 1
+__IO uint32_t sound2_list[LISTSIZE] = {0};		// Lista de sonido 2
+__IO uint32_t sound3_list[LISTSIZE] = {0};		// Lista de sonido 3
 
  // Puntero a la direccion de memoria del buffer de transferencia
  //static uint16_t * const adc_dac_buffer = (uint16_t *)ADDRESS;
@@ -106,7 +108,7 @@ int main (void){
    configPin();
    configADC();
    configDAC();
-   //configTimer();
+   configTimer();
    configDMA();
 
 
@@ -220,7 +222,7 @@ int main (void){
                     ledRojo();
                     NVIC_EnableIRQ(ADC_IRQn);
                     ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, ENABLE); // activo el canal del potenciometro
-                    ADC_BurstCmd(LPC_ADC, ENABLE);
+                    //ADC_BurstCmd(LPC_ADC, ENABLE);
 
                   }
                   else if(ch == '2'){
@@ -229,7 +231,7 @@ int main (void){
                     ledVerde();
                     NVIC_EnableIRQ(ADC_IRQn);
                     ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, ENABLE); // activo el canal del potenciometro
-                    ADC_BurstCmd(LPC_ADC, ENABLE);
+                    //ADC_BurstCmd(LPC_ADC, ENABLE);
                   }
                   else if(ch == '3'){
                     sound_index = 6; // Si toco la tecla '3' grabo en la lista de sonido 3
@@ -237,13 +239,13 @@ int main (void){
                     ledAzul();
                     NVIC_EnableIRQ(ADC_IRQn);
                     ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, ENABLE); // activo el canal del potenciometro
-                    ADC_BurstCmd(LPC_ADC, ENABLE);
+                    //ADC_BurstCmd(LPC_ADC, ENABLE);
                   }else if (ch == '8'){
                     recording = 0;
                     ledOff();
                     NVIC_DisableIRQ(ADC_IRQn);
                     ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, DISABLE); // Desactiva el canal del potenciometro
-                    ADC_BurstCmd(LPC_ADC, DISABLE);
+                    //ADC_BurstCmd(LPC_ADC, DISABLE);
 
                     //GPDMA_ChannelCmd(1, DISABLE); // Detengo la grabacion
 //                    moveListDAC(sound1_list);
@@ -253,7 +255,7 @@ int main (void){
                   }
                   NVIC_DisableIRQ(ADC_IRQn);
                   ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, DISABLE); // Desactiva el canal del potenciometro
-                  ADC_BurstCmd(LPC_ADC, DISABLE);
+                  //ADC_BurstCmd(LPC_ADC, DISABLE);
                 break;
             //------------------------ BOTÓN PARA GRABAR SONIDOS ------------------------
             case '9':
@@ -271,7 +273,8 @@ int main (void){
                     ledRojo();
                     buffer_full = 0;
                     ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
-                    ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
+                    TIM_Cmd(LPC_TIM0, ENABLE);
+//                    ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
                     NVIC_EnableIRQ(ADC_IRQn);
 
                     //configDmaAdc();
@@ -282,7 +285,8 @@ int main (void){
                     buffer_full = 0;
                     //configDmaAdc();
                     ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
-                    ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
+                    TIM_Cmd(LPC_TIM0, ENABLE);
+                    //ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
                     NVIC_EnableIRQ(ADC_IRQn);
 
 
@@ -292,7 +296,8 @@ int main (void){
                     ledAzul();
                     buffer_full = 0;
                     ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
-                    ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
+                    TIM_Cmd(LPC_TIM0, ENABLE);
+                    //ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
                     NVIC_EnableIRQ(ADC_IRQn);
 
                     //configDmaAdc();
@@ -306,10 +311,10 @@ int main (void){
                 sound_index = 0;
                 buffer_full = 0;
                 NVIC_DisableIRQ(ADC_IRQn);
-                GPDMA_ChannelCmd(0, DISABLE); // Detengo la grabacion
+                //GPDMA_ChannelCmd(0, DISABLE); // Detengo la grabacion
                 ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, DISABLE); // Desactiva el canal del microfono
-                ADC_BurstCmd(LPC_ADC, DISABLE);
-                //TIM_Cmd(LPC_TIM0, DISABLE);
+                //ADC_BurstCmd(LPC_ADC, DISABLE);
+                TIM_Cmd(LPC_TIM0, DISABLE);
                 break;
 
             default:
@@ -492,7 +497,7 @@ void configPin(void){
 	 */
 void configADC(void){
   ADC_Init(LPC_ADC, ADCRATE);
-  ADC_StartCmd(LPC_ADC, ADC_START_CONTINUOUS);
+  ADC_StartCmd(LPC_ADC, ADC_START_ON_MAT01);
   ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, DISABLE); // El canal del microfono se configura apagado hasta que empiece la grabacion
   ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, DISABLE); // El canal del potenciometro empieza desactivado
   ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE); // Interrupcion del microfono
@@ -528,7 +533,7 @@ void configDmaDac(__IO uint32_t listtoDAC[]) {
     lli.DstAddr= (uint32_t)&(LPC_DAC->DACR);
     lli.NextLLI= (uint32_t)&lli;
     lli.Control= LISTSIZE
-    			| (4<<12) //source width 32 bit
+    			| (2<<12) //source width 32 bit
     			| (4<<15) //
     			| (1<<26) //source increment
     			| (2<<18)
@@ -553,31 +558,31 @@ void configDmaDac(__IO uint32_t listtoDAC[]) {
     //NVIC_EnableIRQ(DMA_IRQn);
 }
 
-// void configTimer(void){
-//     TIM_TIMERCFG_Type TIM_ConfigStruct;
-//     TIM_MATCHCFG_Type TIM_MatchConfigStruct;
+ void configTimer(void){
+     TIM_TIMERCFG_Type TIM_ConfigStruct;
+     TIM_MATCHCFG_Type TIM_MatchConfigStruct;
 
-//     // Configuración del Timer
-//     TIM_ConfigStruct.PrescaleOption = TIM_PRESCALE_USVAL;
-//     TIM_ConfigStruct.PrescaleValue = 1; // El prescaler cuenta en microsegundos
+     // Configuración del Timer
+     TIM_ConfigStruct.PrescaleOption = TIM_PRESCALE_USVAL;
+     TIM_ConfigStruct.PrescaleValue = 1; // El prescaler cuenta en microsegundos
 
-//     // Configuración del Match
-//     TIM_MatchConfigStruct.MatchChannel = 1;
-//     TIM_MatchConfigStruct.IntOnMatch = DISABLE;
-//     TIM_MatchConfigStruct.ResetOnMatch = ENABLE;
-//     TIM_MatchConfigStruct.StopOnMatch = DISABLE;
-//     TIM_MatchConfigStruct.ExtMatchOutputType = TIM_EXTMATCH_TOGGLE;
-//     TIM_MatchConfigStruct.MatchValue = 1000000 / ADCRATE; //
+     // Configuración del Match
+     TIM_MatchConfigStruct.MatchChannel = 1;
+     TIM_MatchConfigStruct.IntOnMatch = DISABLE;
+     TIM_MatchConfigStruct.ResetOnMatch = ENABLE;
+     TIM_MatchConfigStruct.StopOnMatch = DISABLE;
+     TIM_MatchConfigStruct.ExtMatchOutputType = TIM_EXTMATCH_TOGGLE;
+     TIM_MatchConfigStruct.MatchValue = 48 - 1; //
 
-//     TIM_Init(LPC_TIM0, TIM_TIMER_MODE, &TIM_ConfigStruct);
-//     TIM_ConfigMatch(LPC_TIM0, &TIM_MatchConfigStruct);
+     TIM_Init(LPC_TIM0, TIM_TIMER_MODE, &TIM_ConfigStruct);
+     TIM_ConfigMatch(LPC_TIM0, &TIM_MatchConfigStruct);
 
-//     // El timer se habilita solo cuando se empieza a grabar.
-//     TIM_Cmd(LPC_TIM0, DISABLE);
+     // El timer se habilita solo cuando se empieza a grabar.
+     TIM_Cmd(LPC_TIM0, DISABLE);
 
-//     //NVIC_SetPriority(TIMER0_IRQn, 4); // Prioridad intermedia
-//     //NVIC_EnableIRQ(TIMER0_IRQn);
-// }
+     //NVIC_SetPriority(TIMER0_IRQn, 4); // Prioridad intermedia
+     //NVIC_EnableIRQ(TIMER0_IRQn);
+ }
 
 /*
 * ---------------------------------------------------------------
@@ -623,8 +628,8 @@ void EINT3_IRQHandler(void){
 
 void ADC_IRQHandler(){
 
-	uint32_t stat = ADC_ChannelGetStatus(LPC_ADC, 0, 0);
-	   //if(!stat){
+	uint32_t stat = ADC_ChannelGetStatus(LPC_ADC, 0, 1);
+	   //if(stat){
 		   uint16_t raw = ADC_ChannelGetData(LPC_ADC, 0);
 		   	   uint16_t sample12 = (raw >> 4) & 0x0FFF;   // 12 bits puros
 
@@ -638,30 +643,21 @@ void ADC_IRQHandler(){
 		   	               index = 0;
 		   	           }
 		   	       }else{
-		   	    	//NVIC_DisableIRQ(ADC_IRQn);
-		   	    	ADC_BurstCmd(LPC_ADC,DISABLE);
+		   	    	NVIC_DisableIRQ(ADC_IRQn);
+		   	    	//ADC_BurstCmd(LPC_ADC,DISABLE);
 		   	    	for(uint32_t i = 0; i<LISTSIZE; i++){
-		                switch (sound_index){
-		                    case 1:
+		                     switch (sound_index)
+		                     {
+		                     case 1:
 		                       sound1_list[i]=(muestras_adc[i]<< 6);
 		                       break;
-		                    case 2:
+		                     case 2:
 		                       sound2_list[i]=(muestras_adc[i]<< 6);
 		                       break;
-		                    case 3:
+		                     case 3:
 		                       sound3_list[i]=(muestras_adc[i]<< 6);
 		                       break;
-                            case 4:
-                                
-                                break;
-                            case 5:
-
-                                break;
-                            case 6:
-
-                                break;
-                        
-		                    default:
+		                     default:
 		                       break;
 		                     }
 

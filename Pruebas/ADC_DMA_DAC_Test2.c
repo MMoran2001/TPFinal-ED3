@@ -9,10 +9,11 @@ PASAR DEL ADC AL DMA Y DEL DMA AL DAC USANDO INTERRUPCIONES DEL DMA Y BURST MODE
 #include "lpc17xx_dac.h"
 #include "lpc17xx_gpdma.h"
 #include "lpc17xx_timer.h"
+#include "lpc17xx_clkpwr.h"
 
-#define ADCRATE   200000          // 200 kHz
-#define TIMEOUT   125           // PCLK_DAC / ADCRATE (25 MHz / 200 kHz)
-#define LISTSIZE  1024              // cantidad de muestras
+#define ADCRATE   1000          // 200 kHz
+#define TIMEOUT   25000           // PCLK_DAC / ADCRATE (25 MHz / 200 kHz)
+#define LISTSIZE  4095              // cantidad de muestras
 #define ADDRESS   ((uint32_t)0x2007C000)   // buffer en RAM2
 
 static uint16_t * const adc_dac_buffer = (uint16_t *)ADDRESS;
@@ -58,6 +59,7 @@ void configDAC(void) {
     DAC_Init(LPC_DAC);
     DAC_SetBias(LPC_DAC, 0);    // baja impedancia (más corriente, más rápido)
 
+    CLKPWR_SetPCLKDiv (CLKPWR_PCLKSEL_DAC, CLKPWR_PCLKSEL_CCLK_DIV_4);
     // Habilito contador interno + DMA en el DAC
     dacCfg.CNT_ENA = SET;
     dacCfg.DMA_ENA = SET;
@@ -116,7 +118,7 @@ void configDmaDac(void) {
     NVIC_EnableIRQ(DMA_IRQn);
 }
 
-void GPDMA_IRQHandler(void) {
+void DMA_IRQHandler(void) {
     // Manejo interrupción del canal 0 (ADC -> RAM)
     if (GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 0)) {
         GPDMA_ClearIntPending(GPDMA_STAT_INTTC, 0);

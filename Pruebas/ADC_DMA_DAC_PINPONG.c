@@ -6,7 +6,7 @@
 
 #define ADDRESS ((0x2007C000))
 #define SAMPLE_RATE 8000
-#define BUFFER_SIZE 512
+#define BUFFER_SIZE 4095
 
 GPDMA_LLI_Type lli_adc_ping, lli_adc_pong;
 GPDMA_LLI_Type lli_dac_ping, lli_dac_pong;
@@ -64,9 +64,9 @@ void configDAC(void) {
     DAC_CONVERTER_CFG_Type dacCfg = {0};
     dacCfg.DBLBUF_ENA = DISABLE;
     dacCfg.CNT_ENA = ENABLE; // El contador del DAC se usará para temporizar las transferencias DMA
-    dacCfg.DMA_ENA = ENABLE; // Habilitar DMA para el DAC
-
+    dacCfg.DMA_ENA = ENABLE; // Habilitar DMA para el D
     DAC_Init(LPC_DAC);
+    
     DAC_SetDMATimeOut(LPC_DAC, (SystemCoreClock/4)/SAMPLE_RATE); // Configurar el timeout del DAC
     DAC_ConfigDAConverterControl(LPC_DAC, &dacCfg);
     

@@ -12,9 +12,9 @@
 
 #define ROW_PORT 2
 #define COL_PORT 2
-//#define TIMEOUT 3124	
+//#define TIMEOUT 3124
 #define ADCRATE 200000		// A mayor ADCRATE mayor fidelidad de sonido.
-#define LISTSIZE 4096		// Cantidad de muestras
+#define LISTSIZE 2000		// Cantidad de muestras
 #define ADDRESS ((uint32_t)0x2007C000) // buffer en RAM2
 #define DACRATE (25000000)/ADCRATE
 
@@ -39,6 +39,10 @@ volatile uint32_t ticks_ms = 0;
 volatile uint16_t DACRATE1 = DACRATE;
 volatile uint16_t DACRATE2 = DACRATE;
 volatile uint16_t DACRATE3 = DACRATE;
+volatile uint16_t adc_buffer[LISTSIZE] = {0};
+volatile int index = 0;
+volatile int buffer_full = 0;
+uint32_t dmaON = 0;
 
 #define SEQUENCE_BUFFER_SIZE 5
 char sequence_buffer[SEQUENCE_BUFFER_SIZE] = {0};
@@ -46,12 +50,13 @@ int sequence_index = 0;
 int sequence_recording = 0;
 
 /* Esta lista guarda el sonido grabado por el microfono. */
- uint32_t sound1_list[LISTSIZE] = {0};		// Lista de sonido 1
- uint32_t sound2_list[LISTSIZE] = {0};		// Lista de sonido 2
- uint32_t sound3_list[LISTSIZE] = {0};		// Lista de sonido 3
+volatile uint32_t muestras_adc[LISTSIZE] = {0};
+volatile uint32_t sound1_list[LISTSIZE] = {0};		// Lista de sonido 1
+volatile uint32_t sound2_list[LISTSIZE] = {0};		// Lista de sonido 2
+volatile uint32_t sound3_list[LISTSIZE] = {0};		// Lista de sonido 3
 
  // Puntero a la direccion de memoria del buffer de transferencia
- static uint16_t * const adc_dac_buffer = (uint16_t *)ADDRESS;
+ //static uint16_t * const adc_dac_buffer = (uint16_t *)ADDRESS;
 
 // --- Prototipos para el teclado ---
 void rows_all_high(void);
@@ -73,20 +78,26 @@ void configDAC(void);
 void configTimer(void);
 void configDMA(void);
 void configUART(void);
-void configDmaDac(void);
-void configDmaAdc(void);
+void configDmaDac(volatile uint32_t listtoDAC[]);
+//void configDmaAdc(void);
 
 // --- Prototipos para las funciones auxiliares ---
 void Keypad_clear(char *ch);
-void startPlayback(uint32_t* sound_list, uint16_t* buffer);
+void startPlayback(volatile uint32_t *sound_list);
 void convertBufferAdcToDac(uint16_t *buf, uint32_t n, int index);
+void ledOff();
+void ledRojo();
+void ledVerde();
+void ledAzul();
+void ledCeleste();
+void ledVioleta();
 
 
 // --- Handlers de interrupción ---
 void SysTick_Handler(void);
 void EINT3_IRQHandler(void);
 void ADC_IRQHandler(void);
-void GPDMA_IRQHandler(void);
+void DMA_IRQHandler(void);
 
 
 
@@ -99,9 +110,7 @@ int main (void){
    configDMA();
 
 
-   GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-   GPIO_SetValue(3, (1<<25)); // Apaga led verde
-   GPIO_SetValue(3, (1<<26)); // Apaga led azul
+   ledOff();
    while (1){
        char ch;
        Keypad_GetCharNonBlock(&ch);
@@ -109,34 +118,28 @@ int main (void){
         switch(ch){
             case '1':
                   if (!recording) { // Reproducir solo si no se está grabando
-                    DAC_SetDMATimeOut(LPC_DAC, DACRATE1);
-                    startPlayback(sound1_list, adc_dac_buffer);
+                    //DAC_SetDMATimeOut(LPC_DAC, DACRATE1);
+                    startPlayback(sound1_list);
                   }
-                  GPIO_SetValue(3, (1<<25)); // Apaga led rojo
-                  GPIO_SetValue(3, (1<<26)); // Apaga led azul
-                  GPIO_ClearValue(0, (1<<22)); // Enciende led rojo
+                  ledRojo();
                   //NVIC_DisableIRQ(DMA_IRQn);
                 break;
             case '2':
                   if (!recording) { // Reproducir solo si no se está grabando
-                    DAC_SetDMATimeOut(LPC_DAC, DACRATE2);
-                    startPlayback(sound2_list, adc_dac_buffer);
+                    //DAC_SetDMATimeOut(LPC_DAC, DACRATE2);
+                    startPlayback(sound2_list);
 
                   }
-                  GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-                  GPIO_SetValue(3, (1<<26)); // Apaga led azul
-                  GPIO_ClearValue(3, (1<<25)); // Enciende led verde
+                  ledVerde();
                   //NVIC_DisableIRQ(DMA_IRQn);
                 break;
             case '3':
                   if (!recording) { // Reproducir solo si no se está grabando
-                    DAC_SetDMATimeOut(LPC_DAC, DACRATE3);
-                    startPlayback(sound3_list, adc_dac_buffer);
+                    //DAC_SetDMATimeOut(LPC_DAC, DACRATE3);
+                    startPlayback(sound3_list);
 
                   }
-                  GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-                  GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                  GPIO_ClearValue(3, (1<<26)); // Enciende led azul
+                  ledAzul();
                   //NVIC_DisableIRQ(DMA_IRQn);
                 break;
             case '5':
@@ -150,32 +153,28 @@ int main (void){
                   for(int i = 0 ; i<sequence_index ; i++){
                 	  if((sequence_buffer[i]) == 1){
                       DAC_SetDMATimeOut(LPC_DAC, DACRATE1);
-                		  startPlayback(sound1_list, adc_dac_buffer);
+                		  startPlayback(sound1_list);
                 	  }
                 	  else if((sequence_buffer[i]) == 2){
                       DAC_SetDMATimeOut(LPC_DAC, DACRATE2);
-                		  startPlayback(sound2_list, adc_dac_buffer);
+                		  startPlayback(sound2_list);
                 	  }
                 	  else if((sequence_buffer[i]) == 3){
                       DAC_SetDMATimeOut(LPC_DAC, DACRATE3);
-                		  startPlayback(sound3_list, adc_dac_buffer);
+                		  startPlayback(sound3_list);
                 	  }
                 	  delay_ms(500);
                   }
                   if(ch == '5'){
                     playing =0;
-                    GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(3, (1<<26)); // Apaga led azul
+                    ledOff();
                     GPDMA_ChannelCmd(1, DISABLE); // Detengo la reproduccion
                   }
                 }
                 break;
             case '7':
                 sequence_recording = 1;
-                GPIO_ClearValue(3, (1<<26));
-                GPIO_SetValue(3, (1<<25));
-                GPIO_ClearValue(0, (1<<22));
+                ledVioleta();
                 sequence_index = 0; // Resetea el índice al iniciar
                 for(int i=0; i<SEQUENCE_BUFFER_SIZE; i++) sequence_buffer[i] = 0; // Limpia el buffer
                 while (sequence_recording) { // Mientras se mantenga presionada la tecla y este grabando
@@ -188,132 +187,125 @@ int main (void){
                     sequence_buffer[sequence_index] = ch;
                     sequence_index = (sequence_index + 1) % SEQUENCE_BUFFER_SIZE;
                     Keypad_clear(&ch); // Limpia la tecla para que no se procese de nuevo
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(3, (1<<26)); // Apaga led azul
-                    GPIO_ClearValue(0, (1<<22));
+                    ledRojo();
                   }
                   else if(ch == '2'){
                     sequence_buffer[sequence_index] = ch;
                     sequence_index = (sequence_index + 1) % SEQUENCE_BUFFER_SIZE;
-                    GPIO_SetValue(3, (1<<26)); // Apaga led verde
-                    GPIO_SetValue(0, (1<<22)); // Apaga led azul
-                    GPIO_ClearValue(3, (1<<25));
+                    ledVerde();
                   }
                   else if(ch == '3'){
                     sequence_buffer[sequence_index] = ch;
                     sequence_index = (sequence_index + 1) % SEQUENCE_BUFFER_SIZE;
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(0, (1<<22)); // Apaga led azul
-                    GPIO_ClearValue(3, (1<<26));
+                    ledAzul();
                   }else if (ch == '7'){
                     sequence_recording = 0;
-                    GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(3, (1<<26)); // Apaga led azul
+                    ledOff();
                   }
                 }
                 break;
-            //------------------------ BOTÓN PARA CAMBIAR FRECUENCIA ------------------------    
+            //------------------------ BOTÓN PARA CAMBIAR FRECUENCIA ------------------------
             case '8':
               recording = 1;
-              GPIO_ClearValue(3, (1<<26));
-              GPIO_ClearValue(3, (1<<25));
-              GPIO_ClearValue(0, (1<<22));
-              ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, ENABLE); // activo el canal del potenciometro
-              ADC_BurstCmd(LPC_ADC, ENABLE);
 
-              
-                while (recording) { // Mientras se mantenga presionada la tecla y este grabando
-                  //TO DO: Espera a que se suelte la tecla, porque read_col_index me bloquea el programa en scan_key_position
-                  //TO DO: Ver como hacer para que el programa tome dos teclas (No hace falta se pueden hacer todos while)
+              ledVioleta();
+
+                while (recording) {
                   Keypad_clear(&ch);
                   Keypad_GetCharNonBlock(&ch);
 
                   if(ch == '1'){
                     sound_index = 4; // Si toco la tecla '1' grabo en la lista de sonido 1
-                    configDmaAdc();
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(3, (1<<26)); // Apaga led azul
-                    GPIO_ClearValue(0, (1<<22));
+                    //configDmaAdc();
+                    ledRojo();
+                    NVIC_EnableIRQ(ADC_IRQn);
+                    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, ENABLE); // activo el canal del potenciometro
+                    ADC_BurstCmd(LPC_ADC, ENABLE);
 
                   }
                   else if(ch == '2'){
                     sound_index = 5; // Si toco la tecla '2' grabo en la lista de sonido 2
-                    configDmaAdc();
-                    GPIO_SetValue(3, (1<<26)); // Apaga led verde
-                    GPIO_SetValue(0, (1<<22)); // Apaga led azul
-                    GPIO_ClearValue(3, (1<<25));
+                    //configDmaAdc();
+                    ledVerde();
+                    NVIC_EnableIRQ(ADC_IRQn);
+                    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, ENABLE); // activo el canal del potenciometro
+                    ADC_BurstCmd(LPC_ADC, ENABLE);
                   }
                   else if(ch == '3'){
                     sound_index = 6; // Si toco la tecla '3' grabo en la lista de sonido 3
-                    configDmaAdc();
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(0, (1<<22)); // Apaga led azul
-                    GPIO_ClearValue(3, (1<<26));
+                    //configDmaAdc();
+                    ledAzul();
+                    NVIC_EnableIRQ(ADC_IRQn);
+                    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, ENABLE); // activo el canal del potenciometro
+                    ADC_BurstCmd(LPC_ADC, ENABLE);
                   }else if (ch == '8'){
                     recording = 0;
-                    GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(3, (1<<26)); // Apaga led azul
+                    ledOff();
+                    NVIC_DisableIRQ(ADC_IRQn);
                     ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, DISABLE); // Desactiva el canal del potenciometro
                     ADC_BurstCmd(LPC_ADC, DISABLE);
-                    NVIC_DisableIRQ(DMA_IRQn);
-                    GPDMA_ChannelCmd(1, DISABLE); // Detengo la grabacion
+
+                    //GPDMA_ChannelCmd(1, DISABLE); // Detengo la grabacion
 //                    moveListDAC(sound1_list);
 //                    moveListDAC(sound2_list);
 //                    moveListDAC(sound3_list);
                   }
                   }
+                  NVIC_DisableIRQ(ADC_IRQn);
+                  ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, DISABLE); // Desactiva el canal del potenciometro
+                  ADC_BurstCmd(LPC_ADC, DISABLE);
                 break;
             //------------------------ BOTÓN PARA GRABAR SONIDOS ------------------------
-            case '9': 
+            case '9':
               recording = 1;
               sound_index = 0;
-  
-              GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-              GPIO_SetValue(3, (1<<25)); // Apaga led verde
-              GPIO_SetValue(3, (1<<26)); // Apaga led azul
-              GPIO_ClearValue(3, (1<<26));
-              GPIO_ClearValue(3, (1<<25));
-              
-              ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
-              ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
-              
-                while (recording) { 
+
+              ledCeleste();
+
+                while (recording) {
                   Keypad_clear(&ch);
                   Keypad_GetCharNonBlock(&ch);
 
                   if(ch == '1'){
                     sound_index = 1; // Si toco la tecla '1' grabo en la lista de sonido 1
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(3, (1<<26)); // Apaga led azul
-                    GPIO_ClearValue(0, (1<<22));
-                    configDmaAdc();
+                    ledRojo();
+                    buffer_full = 0;
+                    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
+                    ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
+                    NVIC_EnableIRQ(ADC_IRQn);
+
+                    //configDmaAdc();
                   }
                   else if(ch == '2'){
                     sound_index = 2; // Si toco la tecla '2' grabo en la lista de sonido 2
-                    GPIO_SetValue(3, (1<<26)); // Apaga led verde
-                    GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-                    GPIO_ClearValue(3, (1<<25));
-                    configDmaAdc();
+                    ledVerde();
+                    buffer_full = 0;
+                    //configDmaAdc();
+                    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
+                    ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
+                    NVIC_EnableIRQ(ADC_IRQn);
+
+
                   }
                   else if(ch == '3'){
                     sound_index = 3; // Si toco la tecla '3' grabo en la lista de sonido 3
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(0, (1<<22)); // Apaga led azul
-                    GPIO_ClearValue(3, (1<<26));
-                    configDmaAdc();
+                    ledAzul();
+                    buffer_full = 0;
+                    ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, ENABLE);
+                    ADC_BurstCmd(LPC_ADC, ENABLE); // activo el canal del microfono en BURST
+                    NVIC_EnableIRQ(ADC_IRQn);
+
+                    //configDmaAdc();
                   }
                   else if(ch == '9'){
                     recording = 0;
-                    GPIO_SetValue(0, (1<<22)); // Apaga led rojo
-                    GPIO_SetValue(3, (1<<25)); // Apaga led verde
-                    GPIO_SetValue(3, (1<<26)); // Apaga led azul
+                    ledOff();
 
                   }
                 }
                 sound_index = 0;
-                NVIC_DisableIRQ(DMA_IRQn);
+                buffer_full = 0;
+                NVIC_DisableIRQ(ADC_IRQn);
                 GPDMA_ChannelCmd(0, DISABLE); // Detengo la grabacion
                 ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, DISABLE); // Desactiva el canal del microfono
                 ADC_BurstCmd(LPC_ADC, DISABLE);
@@ -325,10 +317,6 @@ int main (void){
                   //GPIO_SetValue(3, (1<<25)); // Apaga led verde
                   //GPIO_SetValue(3, (1<<26)); // Apaga led azul
                 break;
-
-
-
-
       }
     }
     return 0;
@@ -506,8 +494,9 @@ void configADC(void){
   ADC_Init(LPC_ADC, ADCRATE);
   ADC_StartCmd(LPC_ADC, ADC_START_CONTINUOUS);
   ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_0, DISABLE); // El canal del microfono se configura apagado hasta que empiece la grabacion
-  ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, DISABLE); // El canal del potenciometro empieza activo
-  ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, DISABLE); // Interrupcion deshabilitada
+  ADC_ChannelCmd(LPC_ADC, ADC_CHANNEL_1, DISABLE); // El canal del potenciometro empieza desactivado
+  ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE); // Interrupcion del microfono
+  ADC_IntConfig(LPC_ADC, ADC_ADINTEN1, ENABLE); // Innterrupcion del potenciometro
   ADC_BurstCmd(LPC_ADC, DISABLE); // Modo burst arranca deshabilitado
 }
 
@@ -518,60 +507,50 @@ void configDAC(void){
   dacCfg.CNT_ENA = 1;    // Habilitar contador de tiempo
   dacCfg.DMA_ENA = 1;    // Habilitar acceso a DMA
 
-
+  DAC_Init(LPC_DAC);
+  DAC_SetBias(LPC_DAC, 0);
   DAC_ConfigDAConverterControl(LPC_DAC, &dacCfg);
   DAC_SetDMATimeOut(LPC_DAC, DACRATE); // Tiempo de espera DMA
-  DAC_Init(LPC_DAC); // Se inicializa el DAC con BIAS de 700uA
 
 }
 
 // --- configuración de DMA ---
-// Podemos copiar lo de los chicos y modificarlo para lo nuestro
 void configDMA(void){
   GPDMA_Init();
-  NVIC_SetPriority(DMA_IRQn, 5); // Baja prioridad
-}
-
-//------------------ DMA: ADC -> RAM (canal 0, P2M) ----------------
-void configDmaAdc(void) {
-    GPDMA_Channel_CFG_Type cfg;
-    NVIC_DisableIRQ(DMA_IRQn);
-    GPDMA_ChannelCmd(0, DISABLE);
-
-    cfg.ChannelNum    = 0;
-    cfg.SrcMemAddr    = 0;                          // fuente = periférico
-    cfg.DstMemAddr    = (uint32_t)adc_dac_buffer;   // destino = RAM
-    cfg.TransferSize  = LISTSIZE;
-    cfg.TransferWidth = GPDMA_WIDTH_HALFWORD;
-    cfg.TransferType  = GPDMA_TRANSFERTYPE_P2M;
-    cfg.SrcConn       = GPDMA_CONN_ADC;
-    cfg.DstConn       = 0;
-    cfg.DMALLI        = 0;                          // sin lista enlazada
-
-    GPDMA_Setup(&cfg);
-    GPDMA_ChannelCmd(0, ENABLE);
-    NVIC_EnableIRQ(DMA_IRQn);
 }
 
 //------------------ DMA: RAM -> DAC (canal 1, M2P) ----------------
-void configDmaDac(void) {
+void configDmaDac(__IO uint32_t listtoDAC[]) {
     GPDMA_Channel_CFG_Type cfg;
-    NVIC_DisableIRQ(DMA_IRQn);
+    GPDMA_LLI_Type lli;
+
+    lli.SrcAddr= (uint32_t)listtoDAC;
+    lli.DstAddr= (uint32_t)&(LPC_DAC->DACR);
+    lli.NextLLI= (uint32_t)&lli;
+    lli.Control= LISTSIZE
+    			| (3<<12) //source width 32 bit
+    			| (4<<15) //
+    			| (1<<26) //source increment
+    			| (2<<18)
+    			| (1<<22)
+    			| (0<<27)
+    			;
+    //NVIC_DisableIRQ(DMA_IRQn);
     GPDMA_ChannelCmd(1, DISABLE);
 
     cfg.ChannelNum    = 1;
-    cfg.SrcMemAddr    = (uint32_t)adc_dac_buffer;   // fuente = RAM
-    cfg.DstMemAddr    = 0;                          // destino = periférico
+    cfg.SrcMemAddr    = (uint32_t)listtoDAC;   // fuente = lista de sonido seleccionada
+    cfg.DstMemAddr    = 0;
     cfg.TransferSize  = LISTSIZE;
-    cfg.TransferWidth = GPDMA_WIDTH_HALFWORD;
+    cfg.TransferWidth = GPDMA_WIDTH_WORD;
     cfg.TransferType  = GPDMA_TRANSFERTYPE_M2P;
     cfg.SrcConn       = 0;
     cfg.DstConn       = GPDMA_CONN_DAC;
-    cfg.DMALLI        = 0;
+    cfg.DMALLI        = (uint32_t)&lli;
 
     GPDMA_Setup(&cfg);
     GPDMA_ChannelCmd(1, ENABLE);
-    NVIC_EnableIRQ(DMA_IRQn);
+    //NVIC_EnableIRQ(DMA_IRQn);
 }
 
 // void configTimer(void){
@@ -642,31 +621,78 @@ void EINT3_IRQHandler(void){
   NVIC_EnableIRQ(EINT3_IRQn); // 0 = falling edge (enable)
 }
 
-// --- Handler de interrupción de DMA ---
-void DMA_IRQHandler(void) {
-    
-        if (GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 0)) { // Verificar si el dma termino de tomar muestras del adc
-            GPDMA_ChannelCmd(0, DISABLE); // Deshabilitar el canal DMA
-            GPDMA_ClearIntPending(GPDMA_STATCLR_INTTC, 0); // Limpiar el flag de interrupción
+void ADC_IRQHandler(){
 
-            ADC_BurstCmd(LPC_ADC, DISABLE); // Deshabilitar el modo burst del ADC
+	uint32_t stat = ADC_ChannelGetStatus(LPC_ADC, 0, 0);
+	   //if(!stat){
+		   uint16_t raw = ADC_ChannelGetData(LPC_ADC, 0);
+		   	   uint16_t sample12 = (raw >> 4) & 0x0FFF;   // 12 bits puros
 
-            convertBufferAdcToDac(adc_dac_buffer, LISTSIZE, sound_index);
+		   	   if (!buffer_full) {
+		   	           muestras_adc[index] = sample12;
+		   	           muestras_adc[index] = muestras_adc[index] <<2;
+		   	           //DAC_UpdateValue(LPC_DAC, adc_buffer[index]);
+		   	           index++;
+		   	           if (index >= LISTSIZE) {
+		   	               buffer_full = 1;
+		   	               index = 0;
+		   	           }
+		   	       }else{
+		   	    	NVIC_DisableIRQ(ADC_IRQn);
+		   	    	ADC_BurstCmd(LPC_ADC,DISABLE);
+		   	    	for(uint32_t i = 0; i<LISTSIZE; i++){
+		                     switch (sound_index)
+		                     {
+		                     case 1:
+		                       sound1_list[i]=(muestras_adc[i]<< 6);
+		                       break;
+		                     case 2:
+		                       sound2_list[i]=(muestras_adc[i]<< 6);
+		                       break;
+		                     case 3:
+		                       sound3_list[i]=(muestras_adc[i]<< 6);
+		                       break;
+		                     default:
+		                       break;
+		                     }
 
-            configDmaAdc(); // Reconfigurar el DMA para la próxima grabación
+		   	    		    	}
 
-            if(recording){
-              ADC_BurstCmd(LPC_ADC, ENABLE); // Habilitar el modo burst del ADC
-            }
-            
-        }
+		                   ledCeleste();
 
-        if (GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 1)) { // Verificar si el dma termino de sacar muestras por el dac
-            GPDMA_ChannelCmd(1, DISABLE); // Deshabilitar el canal DMA
-            GPDMA_ClearIntPending(GPDMA_STATCLR_INTTC, 1); // Limpiar el flag de interrupción
-            NVIC_DisableIRQ(DMA_IRQn); // Deshabilitar la interrupción del DMA hasta la próxima reproducción
-        }
+		                   //ADC_BurstCmd(LPC_ADC, DISABLE);
+		   	    	//ADC_BurstCmd(LPC_ADC,ENABLE);
+		   	       	//buffer_full = 0;
+		   	       //}
+	   }
+
 }
+
+// --- Handler de interrupción de DMA ---
+// void DMA_IRQHandler(void) {
+
+//         if (GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 0)) { // Verificar si el dma termino de tomar muestras del adc
+//             GPDMA_ChannelCmd(0, DISABLE); // Deshabilitar el canal DMA
+//             GPDMA_ClearIntPending(GPDMA_STATCLR_INTTC, 0); // Limpiar el flag de interrupción
+
+//             ADC_BurstCmd(LPC_ADC, DISABLE); // Deshabilitar el modo burst del ADC
+
+//             convertBufferAdcToDac(adc_dac_buffer, LISTSIZE, sound_index);
+
+//             configDmaAdc(); // Reconfigurar el DMA para la próxima grabación
+
+//             if(recording){
+//               ADC_BurstCmd(LPC_ADC, ENABLE); // Habilitar el modo burst del ADC
+//             }
+
+//         }
+
+//         if (GPDMA_IntGetStatus(GPDMA_STAT_INTTC, 1)) { // Verificar si el dma termino de sacar muestras por el dac
+//             GPDMA_ChannelCmd(1, DISABLE); // Deshabilitar el canal DMA
+//             GPDMA_ClearIntPending(GPDMA_STATCLR_INTTC, 1); // Limpiar el flag de interrupción
+//             NVIC_DisableIRQ(DMA_IRQn); // Deshabilitar la interrupción del DMA hasta la próxima reproducción
+//         }
+// }
 
 
 // void TIMER0_IRQHandler(void){
@@ -712,52 +738,67 @@ void Keypad_clear(char *ch){
 	*ch = 0;
 }
 
-void startPlayback(uint32_t* sound_list, uint16_t* buffer) {
-    
-    for(uint32_t i = 0; i < LISTSIZE; i++){
-      uint16_t temp = (uint16_t)(sound_list[i] & 0xFFFF);
-      buffer[i] = temp;
-    }
-    configDmaDac(); // Configurar el DMA para la transferencia al DAC
+void startPlayback(volatile uint32_t *sound_list) {
+
+    if(sound_list == NULL) return; // Verificar que la lista no sea NULL
+    configDmaDac(sound_list);
 }
 
 // Convierte cada muestra del buffer desde formato ADC (ADGDR/ADDRx)
 // a formato DACR (VALUE en bits 15:6).
-void convertBufferAdcToDac(uint16_t *buf, uint32_t n, int index) {
-    for (uint32_t i = 0; i < n; i++) {
-        uint16_t adc_word = buf[i];
+// void convertBufferAdcToDac(uint16_t *buf, uint32_t n, int index) {
+//     for (uint32_t i = 0; i < n; i++) {
 
-        // 1) Extraer los 12 bits de resultado del ADC: bits 15:4
-        uint16_t adc12 = (adc_word >> 4) & 0x0FFF;   // 0..4095
-
-        // 2) Pasar de 12 bits a 10 bits: dividir por 4 (>> 2)
-        uint16_t dac10 = adc12 >> 2;                 // 0..1023
-
-        // 3) Alinear para el DACR: VALUE en bits 15:6
-        uint16_t dac_word = (dac10 & 0x03FF) << 6;
-
-        // Guardar de vuelta en el mismo buffer
-        buf[i] = dac_word;
-
-        switch(index){
-            case 1:
-                sound1_list[i] = dac_word;
-                break;
-            case 2:
-                sound2_list[i] = dac_word;
-                break;
-            case 3:
-                sound3_list[i] = dac_word;
-                break;
-            case 4:
-                DACRATE1 = dac_word;
-                break;
-            case 5:
-                DACRATE2 = dac_word;
-                break;
-            case 6:
-                DACRATE3 = dac_word;
-                break;
-        }
-    }
+//         switch (index) {
+//             case 1:
+//                 sound1_list[i] = dac_word;
+//                 break;
+//             case 2:
+//                 sound2_list[i] = dac_word;
+//                 break;
+//             case 3:
+//                 sound3_list[i] = dac_word;
+//                 break;
+//             case 4:
+//                 DACRATE1 = dac_word;
+//                 break;
+//             case 5:
+//                 DACRATE2 = dac_word;
+//                 break;
+//             case 6:
+//                 DACRATE3 = dac_word;
+//                 break;
+//         }
+//     }
+// }
+void ledOff(){
+  GPIO_SetValue(0, (1<<22));
+  GPIO_SetValue(3, (1<<25));
+  GPIO_SetValue(3, (1<<26));
 }
+void ledRojo(){
+  GPIO_SetValue(3, (1<<25));
+  GPIO_SetValue(3, (1<<26));
+  GPIO_ClearValue(0, (1<<22));
+}
+void ledVerde(){
+  GPIO_SetValue(0, (1<<22));
+  GPIO_SetValue(3, (1<<26));
+  GPIO_ClearValue(3, (1<<25));
+}
+void ledAzul(){
+  GPIO_SetValue(3, (1<<25));
+  GPIO_SetValue(0, (1<<22));
+  GPIO_ClearValue(3, (1<<26));
+}
+void ledCeleste(){
+  GPIO_SetValue(0, (1<<22));
+  GPIO_ClearValue(3, (1<<26));
+  GPIO_ClearValue(3, (1<<25));
+}
+void ledVioleta(){
+	GPIO_ClearValue(3, (1<<26));
+	GPIO_SetValue(3, (1<<25));
+	GPIO_ClearValue(0, (1<<22));
+}
+

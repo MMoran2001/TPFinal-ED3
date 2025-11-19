@@ -13,10 +13,14 @@
 #define ROW_PORT 2
 #define COL_PORT 2
 //#define TIMEOUT 3124
-#define ADCRATE 200000		// A mayor ADCRATE mayor fidelidad de sonido.
-#define LISTSIZE 2000		// Cantidad de muestras
-#define ADDRESS ((uint32_t)0x2007C000) // buffer en RAM2
+#define ADCRATE 8000		// A mayor ADCRATE mayor fidelidad de sonido.
+#define LISTSIZE 4095		// Cantidad de muestras
+#define ADDRESS 0x2007C000 // buffer en RAM2
+#define ADDRESS1 (ADDRESS + LISTSIZE * sizeof(uint16_t))
+#define ADDRESS2 (ADDRESS + 2 * LISTSIZE * sizeof(uint16_t))
+#define ADDRESS3 (ADDRESS + 3 * LISTSIZE * sizeof(uint16_t))
 #define DACRATE (25000000)/ADCRATE
+
 
 static const uint32_t ROW_BITS[] = { (1<<0), (1<<1), (1<<2), (1<<3)};
 static const uint32_t COL_BITS[] = { (1<<4), (1<<5), (1<<6), (1<<7)};
@@ -32,6 +36,7 @@ static volatile char last_key = 0;
 static volatile uint32_t debounce_ms = 10;
 volatile int newkey = 0;
 volatile int recording = 0;
+volatile int freq_change = 0;
 volatile int playing = 0;
 volatile int sound_index = 0;
 volatile int row, col;
@@ -39,10 +44,11 @@ volatile uint32_t ticks_ms = 0;
 volatile uint16_t DACRATE1 = DACRATE;
 volatile uint16_t DACRATE2 = DACRATE;
 volatile uint16_t DACRATE3 = DACRATE;
-volatile uint16_t adc_buffer[LISTSIZE] = {0};
 volatile int index = 0;
 volatile int buffer_full = 0;
 uint32_t dmaON = 0;
+uint32_t count_UART = 0;
+uint8_t info[1] = "";
 
 #define SEQUENCE_BUFFER_SIZE 5
 char sequence_buffer[SEQUENCE_BUFFER_SIZE] = {0};
@@ -50,13 +56,11 @@ int sequence_index = 0;
 int sequence_recording = 0;
 
 /* Esta lista guarda el sonido grabado por el microfono. */
-volatile uint32_t muestras_adc[LISTSIZE] = {0};
-volatile uint32_t sound1_list[LISTSIZE] = {0};		// Lista de sonido 1
-volatile uint32_t sound2_list[LISTSIZE] = {0};		// Lista de sonido 2
-volatile uint32_t sound3_list[LISTSIZE] = {0};		// Lista de sonido 3
-
- // Puntero a la direccion de memoria del buffer de transferencia
- //static uint16_t * const adc_dac_buffer = (uint16_t *)ADDRESS;
+//__IO uint32_t *memory_pointer = ADDRESS; //puntero que recorre la memoria
+__IO uint32_t *muestras_adc = (__IO uint32_t *)ADDRESS;    // Buffer temporal de las muestras del ADC
+__IO uint16_t sound1_list [LISTSIZE] = {0};		// Buffer de sonido 1
+__IO uint16_t sound2_list [LISTSIZE] = {0};		// Buffer de sonido 2
+__IO uint16_t sound3_list [LISTSIZE] = {0};		// Buffer de sonido 3
 
 // --- Prototipos para el teclado ---
 void rows_all_high(void);
@@ -78,12 +82,12 @@ void configDAC(void);
 void configTimer(void);
 void configDMA(void);
 void configUART(void);
-void configDmaDac(volatile uint32_t listtoDAC[]);
+void configDmaDac(volatile uint16_t sound_list[LISTSIZE]);
 //void configDmaAdc(void);
 
 // --- Prototipos para las funciones auxiliares ---
 void Keypad_clear(char *ch);
-void startPlayback(volatile uint32_t *sound_list);
+void startPlayback(volatile uint16_t sound_list[LISTSIZE]);
 void convertBufferAdcToDac(uint16_t *buf, uint32_t n, int index);
 void ledOff();
 void ledRojo();
@@ -111,6 +115,7 @@ int main (void){
 
 
    ledOff();
+  
    while (1){
        char ch;
        Keypad_GetCharNonBlock(&ch);
@@ -455,12 +460,12 @@ void configPin(void){
   PINSEL_ConfigPin(&PinCfg); // AOUT
 
   // UART2
-  // PinCfg.Portnum = 0;
-  // PinCfg.Pinnum = 10;
-  // PinCfg.Funcnum = 1;
-  // PINSEL_ConfigPin(&PinCfg);	// TXD2
-  // PinCfg.Pinnum 		= 11;
-  // PINSEL_ConfigPin(&PinCfg);	// RXD2
+   PinCfg.Portnum = 0;
+   PinCfg.Pinnum = 10;
+   PinCfg.Funcnum = 1;
+   PINSEL_ConfigPin(&PinCfg);	// TXD2
+   PinCfg.Pinnum 		= 11;
+   PINSEL_ConfigPin(&PinCfg);	// RXD2
 
   //Led rojo
   PinCfg.Portnum = 0;
@@ -510,7 +515,7 @@ void configDAC(void){
   DAC_Init(LPC_DAC);
   DAC_SetBias(LPC_DAC, 0);
   DAC_ConfigDAConverterControl(LPC_DAC, &dacCfg);
-  DAC_SetDMATimeOut(LPC_DAC, DACRATE); // Tiempo de espera DMA
+  DAC_SetDMATimeOut(LPC_DAC, 7000); // Tiempo de espera DMA
 
 }
 
@@ -520,29 +525,29 @@ void configDMA(void){
 }
 
 //------------------ DMA: RAM -> DAC (canal 1, M2P) ----------------
-void configDmaDac(__IO uint32_t listtoDAC[]) {
+void configDmaDac(__IO uint16_t sound_list[LISTSIZE]) {
     GPDMA_Channel_CFG_Type cfg;
     GPDMA_LLI_Type lli;
 
-    lli.SrcAddr= (uint32_t)listtoDAC;
+    lli.SrcAddr= (uint32_t)sound_list;
     lli.DstAddr= (uint32_t)&(LPC_DAC->DACR);
     lli.NextLLI= (uint32_t)&lli;
     lli.Control= LISTSIZE
-    			| (4<<12) //source width 32 bit
-    			| (4<<15) //
-    			| (1<<26) //source increment
-    			| (2<<18)
-    			| (1<<22)
-    			| (0<<27)
-    			;
+    			| (3<<12) //source width 16 bit
+    		    | (4<<15) //
+    		    | (1<<26) //source increment
+    		    | (2<<18)
+    		    | (1<<22)
+    		    | (0<<27)
+    		    ;
     //NVIC_DisableIRQ(DMA_IRQn);
     GPDMA_ChannelCmd(1, DISABLE);
 
     cfg.ChannelNum    = 1;
-    cfg.SrcMemAddr    = (uint32_t)listtoDAC;   // fuente = lista de sonido seleccionada
+    cfg.SrcMemAddr    = (uint32_t)sound_list;   // fuente = lista de sonido seleccionada
     cfg.DstMemAddr    = 0;
     cfg.TransferSize  = LISTSIZE;
-    cfg.TransferWidth = GPDMA_WIDTH_WORD;
+    cfg.TransferWidth = GPDMA_WIDTH_HALFWORD;
     cfg.TransferType  = GPDMA_TRANSFERTYPE_M2P;
     cfg.SrcConn       = 0;
     cfg.DstConn       = GPDMA_CONN_DAC;
@@ -551,6 +556,37 @@ void configDmaDac(__IO uint32_t listtoDAC[]) {
     GPDMA_Setup(&cfg);
     GPDMA_ChannelCmd(1, ENABLE);
     //NVIC_EnableIRQ(DMA_IRQn);
+}
+
+void configUART(void)
+{
+    UART_CFG_Type      UARTConfigStruct;
+    UART_FIFO_CFG_Type UARTFIFOConfigStruct;
+
+    // Configuracion por defecto: 9600, 8 bits, sin paridad, 1 stop (8N1)
+    UART_ConfigStructInit(&UARTConfigStruct);
+//    UARTConfigStruct.Baud_rate = 9600;                   /* 115200 típicamente */
+//    UARTConfigStruct.Parity    = UART_PARITY_NONE;
+//    UARTConfigStruct.Databits  = UART_DATABIT_8;
+//    UARTConfigStruct.Stopbits  = UART_STOPBIT_1;
+    UART_Init(LPC_UART2, &UARTConfigStruct);
+
+    // FIFO
+    UART_FIFOConfigStructInit(&UARTFIFOConfigStruct);
+//    UARTFIFOConfigStruct.FIFO_DMAMode  = DISABLE;
+//    UARTFIFOConfigStruct.FIFO_Level    = UART_FIFO_TRGLEV2;  /* 8 bytes */
+//    UARTFIFOConfigStruct.FIFO_ResetRxBuf = ENABLE;
+//    UARTFIFOConfigStruct.FIFO_ResetTxBuf = ENABLE;
+
+    UART_FIFOConfig(LPC_UART2, &UARTFIFOConfigStruct);
+
+    // Interrupcion por RX
+    UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
+    // Interrupcion por estado de linea (errores)
+    UART_IntConfig(LPC_UART2, UART_INTCFG_RLS, ENABLE);
+
+    // Habilitar en NVIC
+    //NVIC_EnableIRQ(UART2_IRQn);
 }
 
 // void configTimer(void){
@@ -624,44 +660,37 @@ void EINT3_IRQHandler(void){
 void ADC_IRQHandler(){
 
 	uint32_t stat = ADC_ChannelGetStatus(LPC_ADC, 0, 0);
-	   //if(!stat){
+	   if(recording){
 		   uint16_t raw = ADC_ChannelGetData(LPC_ADC, 0);
 		   	   uint16_t sample12 = (raw >> 4) & 0x0FFF;   // 12 bits puros
-
+            
 		   	   if (!buffer_full) {
-		   	           muestras_adc[index] = sample12;
-		   	           muestras_adc[index] = muestras_adc[index] <<2;
+		   	           sound1_list[*muestras_adc] = sample12;
+		   	           //muestras_adc[index] = muestras_adc[index] <<2;
 		   	           //DAC_UpdateValue(LPC_DAC, adc_buffer[index]);
-		   	           index++;
-		   	           if (index >= LISTSIZE) {
+                       (*muestras_adc)++;
+		   	           //index++;
+		   	           if (*muestras_adc >= LISTSIZE) {
 		   	               buffer_full = 1;
 		   	               index = 0;
 		   	           }
 		   	       }else{
-		   	    	//NVIC_DisableIRQ(ADC_IRQn);
+		   	    	NVIC_DisableIRQ(ADC_IRQn);
 		   	    	ADC_BurstCmd(LPC_ADC,DISABLE);
-		   	    	for(uint32_t i = 0; i<LISTSIZE; i++){
-		                switch (sound_index){
-		                    case 1:
-		                       sound1_list[i]=(muestras_adc[i]<< 6);
+		   	    	for(uint16_t i = 0; i<LISTSIZE; i++){
+                       
+		                     switch (sound_index)
+		                     {
+		                     case 1:
+		                       sound1_list[i]=sound1_list[i]<<6;
 		                       break;
-		                    case 2:
-		                       sound2_list[i]=(muestras_adc[i]<< 6);
+		                     case 2:
+		                       sound2_list[i]=sound2_list[i]<<6;
 		                       break;
-		                    case 3:
-		                       sound3_list[i]=(muestras_adc[i]<< 6);
+		                     case 3:
+		                       sound3_list[i]=sound3_list[i]<<6;
 		                       break;
-                            case 4:
-                                
-                                break;
-                            case 5:
-
-                                break;
-                            case 6:
-
-                                break;
-                        
-		                    default:
+		                     default:
 		                       break;
 		                     }
 
@@ -672,9 +701,69 @@ void ADC_IRQHandler(){
 		                   //ADC_BurstCmd(LPC_ADC, DISABLE);
 		   	    	//ADC_BurstCmd(LPC_ADC,ENABLE);
 		   	       	//buffer_full = 0;
-		   	       //}
+		   	      }
+	   }else if(freq_change){
+		   return;
 	   }
 
+}
+
+void UART2_IRQHandler(void)
+{
+    uint32_t intsrc, tmp, tmp1;
+
+    // Determina la fuente de interrupcion
+    intsrc = UART_GetIntId(LPC_UART2);
+    tmp    = intsrc & UART_IIR_INTID_MASK;
+
+    // Received-line status (errores)
+    if (tmp == UART_IIR_INTID_RLS)
+    {
+        tmp1 = UART_GetLineStatus(LPC_UART2);
+
+        // Si hay error, lo descarto y salgo (NO me cuelgo)
+        if (tmp1 & (UART_LSR_OE | UART_LSR_PE | UART_LSR_FE |
+                    UART_LSR_BI | UART_LSR_RXFE))
+        {
+            // Si hubiera un byte pendiente, lo leo para limpiar el estado
+            if (tmp1 & UART_LSR_RDR) {
+                uint8_t dummy;
+                UART_Receive(LPC_UART2, &dummy, 1, NONE_BLOCKING);
+            }
+            return;
+        }
+    }
+
+    // Receive Data Available o Character Time-out
+    if ((tmp == UART_IIR_INTID_RDA) || (tmp == UART_IIR_INTID_CTI))
+    {
+    	UART_Receive(LPC_UART2, info, sizeof(info), NONE_BLOCKING);
+    }
+
+    /* A veces el UART tiene un bug que manda 0 de por medio por eso el condicional. */
+    	if ((count_UART < LISTSIZE) & (info[0] != 0))
+    	{
+    		switch(sound_index){
+    		case 1:
+    			sound1_list[count_UART] = (info[0]<<6);
+    			count_UART++;
+    			break;
+    		case 2:
+    			sound2_list[count_UART] = (info[0]<<6);
+    			count_UART++;
+    			break;
+    		case 3:
+    			sound3_list[count_UART] = (info[0]<<6);
+    			count_UART++;
+    	        break;
+    		}
+
+    	}
+
+    	if (count_UART >= LISTSIZE)
+    	{
+    		count_UART = 0;
+    	}
 }
 
 // --- Handler de interrupción de DMA ---
@@ -747,7 +836,7 @@ void Keypad_clear(char *ch){
 	*ch = 0;
 }
 
-void startPlayback(volatile uint32_t *sound_list) {
+void startPlayback(volatile uint16_t sound_list[LISTSIZE]) {
 
     if(sound_list == NULL) return; // Verificar que la lista no sea NULL
     configDmaDac(sound_list);
