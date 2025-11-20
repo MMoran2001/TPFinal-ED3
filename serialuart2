@@ -1,0 +1,33 @@
+import serial
+import time
+
+txt_path = r"C:\Users\Marcos\OneDrive\UNC\Electronica digital III\RepoTpFinal\TPFinal-ED3\salida_2000.txt"
+COM_PORT = "COM9"              # Cambiar por tu puerto
+BAUD_RATE = 9600             # Velocidad UART
+DELAY = 0.001                  # Retardo entre envíos (1 ms)
+# Abrir puerto serie (AJUSTÁ el COM y el BAUDRATE)
+try:
+    ser = serial.Serial(COM_PORT, BAUD_RATE, timeout=1)
+    print(f"Puerto {COM_PORT} abierto correctamente.")
+except Exception as e:
+    print("Error al abrir el puerto:", e)
+    exit()
+
+# Leer los 2000 valores del TXT
+values = []
+with open(txt_path, "r") as f:
+    for line in f:
+        num = int(line.strip())
+        num = max(0, min(255, num))      # asegurar rango válido
+        values.append(num)
+
+print("Valores cargados:", len(values))
+
+# Enviar uno por uno como byte
+for v in values:
+    ser.write(bytes([v]))   # 👈 ENVÍA UN SOLO BYTE
+    time.sleep(0.001)       # 1 ms entre bytes (ajustable)
+
+ser.close()
+
+print("Transmisión finalizada.")
